@@ -53,10 +53,10 @@ func (g *Game) RemovePlayer(id string) {
 	delete(g.Players, id)
 }
 
-func (g *Game) Move(id string, d Direction) {
+func (g *Game) Move(id string, d Direction) bool {
 	p, ok := g.Players[id]
 	if !ok {
-		return
+		return false
 	}
 
 	nx, ny := p.X, p.Y
@@ -72,12 +72,24 @@ func (g *Game) Move(id string, d Direction) {
 	}
 
 	if nx < 0 || ny < 0 || nx >= g.Size || ny >= g.Size {
-		return // outside the boundary
+		return false
 	}
 
-	if g.CellTaken(nx, ny) != nil {
-		return // place is taken so shoot or move other position
+	if target := g.CellTaken(nx, ny); target != nil {
+		p.Score++
+		g.Respawn(target.ID)
+		return true // shot fired shooter stayed in place
 	}
 
 	p.X, p.Y = nx, ny
+	return false
+}
+
+func (g *Game) Respawn(id string) {
+	p, ok := g.Players[id]
+	if !ok {
+		return
+	}
+
+	p.X, p.Y = g.RandomEmptyCell()
 }
