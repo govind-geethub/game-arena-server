@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<body>
+<h3>Arena test page</h3>
+
+<p><button onclick="createParty()">1. Create party (host)</button></p>
+<p>Code: <input id="code" size="8"> Host token: <input id="token" size="36"></p>
+<p>Name: <input id="name" placeholder="your name">
+   <button onclick="join()">2. Join</button>
+   <button onclick="startMatch()">3. Start match (host)</button></p>
+<hr>
+<select id="dir">
+  <option>Up</option><option>Down</option><option>Left</option><option>Right</option>
+  <option>Up-Left</option><option>Up-Right</option><option>Down-Left</option><option>Down-Right</option>
+</select>
+<select id="dir2">
+  <option>Up</option><option>Down</option><option>Left</option><option>Right</option>
+  <option>Up-Left</option><option>Up-Right</option><option>Down-Left</option><option>Down-Right</option>
+</select>
+<button onclick="act('move')">Move</button>
+<button onclick="act('shoot')">Shoot</button>
+<button onclick="act('skip')">Skip (scan)</button>
+<button onclick="act('double')">Double (uses both directions)</button>
+<pre id="log"></pre>
+
+<script>
+let ws;
+const $ = (id) => document.getElementById(id);
+function log(t) { $("log").textContent = t + "\n\n" + $("log").textContent; }
+
+function createParty() {
+  fetch("/create", { method: "POST" })
+    .then((r) => r.json())
+    .then((d) => { $("code").value = d.code; $("token").value = d.token; log("party created: " + d.code); });
+}
+
+function join() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const url = proto + "://" + location.host + "/ws?code=" + encodeURIComponent($("code").value) +
+              "&name=" + encodeURIComponent($("name").value);
+  ws = new WebSocket(url);
+  ws.onmessage = (e) => log(e.data);
+  ws.onclose = () => log("(disconnected)");
+}
+
+function startMatch() {
+  fetch("/start?code=" + encodeURIComponent($("code").value), {
+    method: "POST",
+    headers: { "X-Host-Token": $("token").value },
+  }).then((r) => r.text()).then(log);
+}
+
+function act(a) {
+  if (!ws) return;
+  ws.send(JSON.stringify({ action: a, dir: $("dir").value, dir2: $("dir2").value }));
+}
+</script>
+</body>
+</html>

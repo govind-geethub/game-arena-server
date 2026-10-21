@@ -17,43 +17,43 @@ const (
 )
 
 var (
-	nameRe       = regexp.MustCompile(`^[A-Za-z0-9_]{1, 16}$`)
-	ErrForbidden = errors.New("Forbidden")
+	nameRe       = regexp.MustCompile(`^[A-Za-z0-9_]{1,16}$`)
+	ErrForbidden = errors.New("forbidden")
 )
 
 // ----- msg sent to Browsers -----
 type LobbyMsg struct {
-	Type    string   `json: "type"`
-	Code    string   `json: code`
-	Players []string `json: "Players"`
+	Type    string   `json:"type"`
+	Code    string   `json:"code"`
+	Players []string `json:"Players"`
 }
 
 type StartMsg struct {
-	Type     string `json: "type"`
-	GridSize int    `json: "gridSize"`
-	Rounds   int    `json: "rounds"`
-	RoundMs  int    `json: "roundMs"`
+	Type     string `json:"type"`
+	GridSize int    `json:"gridSize"`
+	Rounds   int    `json:"rounds"`
+	RoundMs  int    `json:"roundMs"`
 }
 
 type ShotMsg struct {
 	Dir string `json:"dir"`
-	Hit bool   `json: "hit"`
+	Hit bool   `json:"hit"`
 }
 
 // RoundMsg is one player's private info
 // ViewFor + Feedback
 type RoundMsg struct {
-	Type     string    `json: "type"`
-	Round    int       `json: "round"`
-	X        int       `json: "x"`
-	Y        int       `json: "y"`
-	Charge   int       `json: "charge"`
-	Front    int       `json: "front"`
-	Back     int       `json: "back"`
-	Sides    int       `json: "sides"`
-	Near     int       `json: "near"`
-	Score    float64   `json: "score"`
-	Shots    []ShotMsg `json: "shots"`
+	Type     string    `json:"type"`
+	Round    int       `json:"round"`
+	X        int       `json:"x"`
+	Y        int       `json:"y"`
+	Charge   int       `json:"charge"`
+	Front    int       `json:"front"`
+	Back     int       `json:"back"`
+	Sides    int       `json:"sides"`
+	Near     int       `json:"near"`
+	Score    float64   `json:"score"`
+	Shots    []ShotMsg `json:"shots"`
 	ShotFrom []string  `json:"shotFrom"`
 	Died     bool      `json:"died"`
 	DidScan  bool      `json:"didScan"`

@@ -13,8 +13,8 @@ import (
 
 // ClientMsg: browser sends to each client: one action per msg
 type ClientMsg struct {
-	Action string `jason: "action"`
-	Dir    string `json: "dir"`
+	Action string `jason:"action"`
+	Dir    string `json:"dir"`
 	Dir2   string `json:"dir2"`
 }
 
@@ -63,7 +63,7 @@ func clientIP(r *http.Request) string {
 }
 
 func refuse(ctx context.Context, conn *websocket.Conn, msg string) {
-	b, _ := json.Marshal(ErrorMsg{Type: "Error", Message: msg})
+	b, _ := json.Marshal(ErrorMsg{Type: "error", Message: msg})
 	conn.Write(ctx, websocket.MessageText, b)
 	conn.Close(websocket.StatusPolicyViolation, "Refused")
 }
