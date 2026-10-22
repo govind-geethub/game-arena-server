@@ -126,6 +126,7 @@ type Feedback struct {
 	Died     bool
 	DidScan  bool
 	Scan     []Direction // directions of adjacent enemies
+	Notice   string      // why the request was refused, if it was
 }
 
 type View struct {
@@ -252,21 +253,28 @@ func (g *Game) Respawn(id string) {
 }
 
 // Chunk 3: Rules of the Round
-func (g *Game) normalise(p *Player, a Action) Action {
+// with additional response use / not-use
+func (g *Game) normalise(p *Player, a Action) (Action, bool, string) {
 	switch a.Type {
+	case ActionSkip:
+		return a, true, ""
 	case ActionMove, ActionShoot:
 		if a.Dir.Valid() {
-			return a
+			return a, true, ""
 		}
+		return a, false, "invalid direction"
 	case ActionDouble:
-		if a.Dir.Valid() && a.Dir2.Valid() && a.Dir != a.Dir2 &&
-			p.Charge >= MaxCharge && g.enemiesWithin(p.ID, p.X, p.Y, 1) >= 2 {
-			return a
+		switch {
+		case len(g.Players) <= 2:
+			return a, false, "not enough players to activate this option"
+		case p.Charge < MaxCharge:
+			return a, false, "double attack is not charged yet"
+		case !a.Dir.Valid() || !a.Dir2.Valid() || a.Dir == a.Dir2:
+			return a, false, "pick two different directions"
 		}
-	case ActionSkip:
-		return a
+		return a, true, ""
 	}
-	return Action{Type: ActionSkip}
+	return a, false, "unknown action"
 }
 
 // all actions apllied at once
@@ -284,9 +292,16 @@ func (g *Game) ResolveRound(actions map[string]Action) map[string]*Feedback {
 	// validate before anything changes
 	effective := make(map[string]Action, len(actions))
 	for id, a := range actions {
-		if p, ok := g.Players[id]; ok {
-			effective[id] = g.normalise(p, a)
+		p, ok := g.Players[id]
+		if !ok {
+			continue
 		}
+		valid, allowed, notice := g.normalise(p, a)
+		if !allowed {
+			fb[id].Notice = notice // nothing happens, and no free scan
+			continue
+		}
+		effective[id] = valid
 	}
 
 	// # Phase 1: shots, against positions at the start of the round
