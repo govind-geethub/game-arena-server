@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena</title>
+<style>
+  :root { --bg:#0e1320; --panel:#161d2f; --text:#e6e9f2; --muted:#8b93a8;
+          --accent:#3ddc97; --danger:#ff5c6c; --warn:#ffb84d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  input, button { font: inherit; }
+  input { padding: 10px; border-radius: 8px; border: 1px solid #2c3652; background:#0e1320; color:var(--text); }
+  button { padding: 10px 14px; border-radius: 8px; border: 0; background:#2b3756; color:var(--text); cursor:pointer; }
+  button:hover { background:#36456b; }
+  button.primary { background: var(--accent); color:#06281a; font-weight:600; }
+  button.off { opacity:.4; }
+  button.active { outline: 2px solid var(--accent); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  .hidden { display:none !important; }
+  .code { font-size: 2rem; letter-spacing: .3em; font-weight:700; color:var(--accent); }
+  .err { color: var(--danger); min-height: 1.2em; }
+  .chip { display:inline-block; background:#0e1320; border-radius:999px; padding:4px 12px; margin:0 6px 6px 0; }
+  #game { display:flex; gap:16px; flex-wrap:wrap; }
+  #boardWrap { flex: 0 0 auto; max-width:100%; }
+  canvas { background:#000; border-radius:8px; max-width:100%; height:auto; display:block; }
+  #side { flex: 1 1 260px; min-width:240px; }
+  .bar { height:8px; background:#0e1320; border-radius:4px; overflow:hidden; margin:6px 0 12px; }
+  #timerFill { height:100%; width:0; background:var(--accent); }
+  .pips { display:flex; gap:6px; margin: 6px 0 12px; }
+  .pip { width: 26px; height: 10px; border-radius: 5px; background:#0e1320; }
+  .pip.on { background: var(--warn); }
+  .alerts { display:grid; grid-template-columns: repeat(4,1fr); gap:6px; margin-bottom:12px; }
+  .alert { background:#0e1320; border-radius:8px; padding:8px 4px; text-align:center; font-size:.75rem; color:var(--muted); }
+  .alert b { display:block; font-size:1.3rem; color:var(--text); }
+  .alert.hot { background:#3a1f26; color:var(--danger); }
+  .alert.hot b { color:var(--danger); }
+  .modes { display:flex; gap:6px; margin-bottom:8px; }
+  .modes button { flex:1; }
+  .pad { display:grid; grid-template-columns: repeat(3, 56px); gap:6px; margin:8px 0; }
+  .pad button { height:56px; padding:0; font-size:1.2rem; }
+  #queued { color:var(--muted); min-height:1.3em; margin: 4px 0; }
+  #notice { color:var(--warn); min-height:1.3em; margin: 4px 0; font-weight:600; }
+  .small { color:var(--muted); font-size:.8rem; line-height:1.5; }
+  .score { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #2c3652; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Arena</h1>
+
+  <section id="lobbyJoin" class="card">
+    <div class="row">
+      <input id="name" placeholder="Your name (letters, digits, _)" maxlength="16">
+    </div>
+    <div class="row">
+      <button id="createBtn" class="primary">Create party</button>
+      <span>or</span>
+      <input id="code" placeholder="Party code" maxlength="6" style="text-transform:uppercase; width:130px">
+      <button id="joinBtn">Join party</button>
+    </div>
+    <div id="joinErr" class="err"></div>
+  </section>
+
+  <section id="lobbyRoom" class="card hidden">
+    <div>Party code</div>
+    <div id="roomCode" class="code"></div>
+    <p class="small">Share this code. Only players who enter it can join this party.</p>
+    <div id="playerList"></div>
+    <div class="row"><button id="startBtn" class="primary hidden">Start match</button></div>
+    <div id="lobbyMsg" class="err"></div>
+  </section>
+
+  <section id="game" class="hidden">
+    <div id="boardWrap"><canvas id="board"></canvas></div>
+    <div id="side" class="card">
+      <div id="roundText">Round 0</div>
+      <div class="bar"><div id="timerFill"></div></div>
+      <div>Score: <b id="score">0.00</b></div>
+      <div class="small">Double attack charge</div>
+      <div class="pips" id="pips"></div>
+      <div class="alerts">
+        <div class="alert" id="aFront">Front<b>0</b></div>
+        <div class="alert" id="aBack">Behind<b>0</b></div>
+        <div class="alert" id="aSides">Sides<b>0</b></div>
+        <div class="alert" id="aNear">2 away<b>0</b></div>
+      </div>
+      <div class="modes">
+        <button id="modeMove" class="active">Move</button>
+        <button id="modeShoot">Shoot</button>
+        <button id="modeDouble">Double</button>
+      </div>
+      <div class="pad" id="pad"></div>
+      <div id="queued"></div>
+      <div id="notice"></div>
+      <div class="small">
+        Keys: Q W E / A D / Z X C = directions, S or Space = scan, 1 / 2 / 3 = Move / Shoot / Double.
+        You act once per round, and your last choice before the round ends counts.
+        Red bars on your cell: enemy in front or behind. Amber bars: enemy at your side.
+        Dashed ring: enemy exactly two cells away. Scan lifts the fog around you.
+      </div>
+    </div>
+  </section>
+
+  <section id="end" class="card hidden">
+    <h2 id="winner"></h2>
+    <div id="scores"></div>
+    <p><button id="againBtn" class="primary">Back to start</button></p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const DIRS = {
+  "Up": [0, -1], "Down": [0, 1], "Left": [-1, 0], "Right": [1, 0],
+  "Up-Left": [-1, -1], "Up-Right": [1, -1], "Down-Left": [-1, 1], "Down-Right": [1, 1],
+};
+const PAD = [
+  ["Up-Left", "↖"], ["Up", "↑"], ["Up-Right", "↗"],
+  ["Left", "←"], [null, "👁"], ["Right", "→"],
+  ["Down-Left", "↙"], ["Down", "↓"], ["Down-Right", "↘"],
+];
+const KEYS = { q: "Up-Left", w: "Up", e: "Up-Right", a: "Left", d: "Right",
+               z: "Down-Left", x: "Down", c: "Down-Right" };
+const MAX_CHARGE = 3;
+const NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
+
+const S = {
+  ws: null, screen: "lobbyJoin", code: "", name: "", token: "", host: false,
+  grid: 0, cell: 0, rounds: 0, roundMs: 3000, players: 0,
+  last: null, prev: null, mode: "move", firstDir: null, nextAt: 0,
+};
+
+const cv = $("board");
+const ctx = cv.getContext("2d");
+
+// ---------- screens ----------
+function show(name) {
+  for (const id of ["lobbyJoin", "lobbyRoom", "game", "end"]) {
+    $(id).classList.toggle("hidden", id !== name);
+  }
+  S.screen = name;
+}
+
+let noticeTimer = null;
+function notice(text) {
+  $("notice").textContent = text;
+  clearTimeout(noticeTimer);
+  if (text) noticeTimer = setTimeout(() => { $("notice").textContent = ""; }, 4500);
+}
+
+// ---------- lobby ----------
+function connect(code, name) {
+  S.code = code;
+  S.name = name;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const url = proto + "://" + location.host + "/ws?code=" + encodeURIComponent(code) +
+              "&name=" + encodeURIComponent(name);
+  const ws = new WebSocket(url);
+  S.ws = ws;
+  ws.onmessage = (e) => {
+    let m;
+    try { m = JSON.parse(e.data); } catch (err) { return; }
+    handle(m);
+  };
+  ws.onclose = () => {
+    if (S.screen === "game") notice("Disconnected from the server.");
+    else if (S.screen === "lobbyRoom") $("lobbyMsg").textContent = "Disconnected from the server.";
+  };
+}
+
+$("createBtn").onclick = async () => {
+  $("joinErr").textContent = "";
+  const name = $("name").value.trim();
+  if (!NAME_RE.test(name)) {
+    $("joinErr").textContent = "Name must be 1-16 letters, digits or underscores.";
+    return;
+  }
+  try {
+    const r = await fetch("/create", { method: "POST" });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    const d = await r.json();
+    S.token = d.token;
+    S.host = true;
+    connect(d.code, name);
+  } catch (err) {
+    $("joinErr").textContent = err.message || "Could not create a party.";
+  }
+};
+
+$("joinBtn").onclick = () => {
+  $("joinErr").textContent = "";
+  const name = $("name").value.trim();
+  const code = $("code").value.trim().toUpperCase();
+  if (!NAME_RE.test(name)) {
+    $("joinErr").textContent = "Name must be 1-16 letters, digits or underscores.";
+    return;
+  }
+  if (code.length !== 6) {
+    $("joinErr").textContent = "Enter the 6-character party code.";
+    return;
+  }
+  S.host = false;
+  S.token = "";
+  connect(code, name);
+};
+
+$("startBtn").onclick = async () => {
+  $("lobbyMsg").textContent = "";
+  try {
+    const r = await fetch("/start?code=" + encodeURIComponent(S.code), {
+      method: "POST",
+      headers: { "X-Host-Token": S.token },
+    });
+    if (!r.ok) $("lobbyMsg").textContent = (await r.text()).trim();
+  } catch (err) {
+    $("lobbyMsg").textContent = "Could not reach the server.";
+  }
+};
+
+$("againBtn").onclick = () => location.reload();
+
+// ---------- messages from the server ----------
+function handle(m) {
+  switch (m.type) {
+    case "lobby": onLobby(m); break;
+    case "start": onStart(m); break;
+    case "round": onRound(m); break;
+    case "end": onEnd(m); break;
+    case "error":
+      if (S.screen === "lobbyJoin") $("joinErr").textContent = m.message;
+      else $("lobbyMsg").textContent = m.message;
+      break;
+  }
+}
+
+function onLobby(m) {
+  if (S.screen === "game" || S.screen === "end") return;
+  show("lobbyRoom");
+  $("roomCode").textContent = m.code;
+  const list = $("playerList");
+  list.textContent = "";
+  for (const p of m.players) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = p === S.name ? p + " (you)" : p;
+    list.appendChild(chip);
+  }
+  $("startBtn").classList.toggle("hidden", !S.host);
+}
+
+function onStart(m) {
+  S.grid = m.gridSize;
+  S.rounds = m.rounds;
+  S.roundMs = m.roundMs;
+  S.players = m.players;
+  S.last = null;
+  S.prev = null;
+  S.cell = Math.max(18, Math.floor(Math.min(560, window.innerWidth - 32) / S.grid));
+  cv.width = S.cell * S.grid;
+  cv.height = S.cell * S.grid;
+  S.nextAt = Date.now() + S.roundMs;
+  $("modeDouble").classList.toggle("off", S.players <= 2);
+  setMode("move");
+  show("game");
+}
+
+function onRound(m) {
+  S.prev = S.last ? { x: S.last.x, y: S.last.y } : null;
+  S.last = m;
+  S.nextAt = Date.now() + S.roundMs;
+
+  $("roundText").textContent = "Round " + m.round + " / " + S.rounds;
+  $("score").textContent = m.score.toFixed(2);
+  for (let i = 0; i < MAX_CHARGE; i++) {
+    $("pips").children[i].classList.toggle("on", i < m.charge);
+  }
+  setAlert("aFront", m.front);
+  setAlert("aBack", m.back);
+  setAlert("aSides", m.sides);
+  setAlert("aNear", m.near);
+  setQueued("");
+
+  if (m.notice) notice(m.notice);
+  else if (m.died) notice("You were shot (from the " + (m.shotFrom || []).join(" and ") + ") and respawned.");
+  else if ((m.shots || []).some((s) => s.hit)) notice("Hit!");
+  else if ((m.shots || []).length > 0) notice("Missed.");
+  else if (m.didScan) notice("Scan complete.");
+
+  draw();
+}
+
+function onEnd(m) {
+  show("end");
+  const list = $("scores");
+  list.textContent = "";
+  m.scores.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "score";
+    const left = document.createElement("span");
+    left.textContent = (i + 1) + ". " + s.name + (s.name === S.name ? " (you)" : "");
+    const right = document.createElement("b");
+    right.textContent = s.score.toFixed(2);
+    row.appendChild(left);
+    row.appendChild(right);
+    list.appendChild(row);
+  });
+  const top = m.scores[0];
+  $("winner").textContent = top ? (top.name === S.name ? "You win!" : top.name + " wins!") : "Match over";
+}
+
+function setAlert(id, n) {
+  const el = $(id);
+  el.querySelector("b").textContent = n;
+  el.classList.toggle("hot", n > 0);
+}
+
+// ---------- actions ----------
+function send(obj) {
+  if (S.ws && S.ws.readyState === WebSocket.OPEN) S.ws.send(JSON.stringify(obj));
+}
+
+function setQueued(text) { $("queued").textContent = text ? "Queued: " + text : ""; }
+
+function setMode(mode) {
+  if (mode === "double") {
+    if (S.players <= 2) { notice("not enough players to activate this option"); return; }
+    if (S.last && S.last.charge < MAX_CHARGE) { notice("double attack is not charged yet"); return; }
+  }
+  S.mode = mode;
+  S.firstDir = null;
+  $("modeMove").classList.toggle("active", mode === "move");
+  $("modeShoot").classList.toggle("active", mode === "shoot");
+  $("modeDouble").classList.toggle("active", mode === "double");
+}
+
+function pressDir(dir) {
+  if (S.mode === "double") {
+    if (!S.firstDir) {
+      S.firstDir = dir;
+      setQueued("Double attack: " + dir + " + pick a second direction");
+      return;
+    }
+    if (dir === S.firstDir) { notice("pick two different directions"); return; }
+    send({ action: "double", dir: S.firstDir, dir2: dir });
+    setQueued("Double attack: " + S.firstDir + " + " + dir);
+    S.firstDir = null;
+    return;
+  }
+  send({ action: S.mode, dir: dir });
+  setQueued((S.mode === "move" ? "Move " : "Shoot ") + dir);
+}
+
+function doScan() {
+  S.firstDir = null;
+  send({ action: "skip" });
+  setQueued("Scan");
+}
+
+$("modeMove").onclick = () => setMode("move");
+$("modeShoot").onclick = () => setMode("shoot");
+$("modeDouble").onclick = () => setMode("double");
+
+for (const [dir, label] of PAD) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.title = dir || "Scan";
+  b.onclick = dir ? () => pressDir(dir) : doScan;
+  $("pad").appendChild(b);
+}
+for (let i = 0; i < MAX_CHARGE; i++) {
+  const p = document.createElement("div");
+  p.className = "pip";
+  $("pips").appendChild(p);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (S.screen !== "game" || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (KEYS[k]) pressDir(KEYS[k]);
+  else if (k === "s" || k === " ") { e.preventDefault(); doScan(); }
+  else if (k === "1") setMode("move");
+  else if (k === "2") setMode("shoot");
+  else if (k === "3") setMode("double");
+});
+
+// ---------- round timer ----------
+setInterval(() => {
+  if (S.screen !== "game") return;
+  const left = Math.max(0, S.nextAt - Date.now());
+  $("timerFill").style.width = Math.min(100, (left / S.roundMs) * 100) + "%";
+}, 50);
+
+// ---------- drawing ----------
+function inside(x, y) { return x >= 0 && y >= 0 && x < S.grid && y < S.grid; }
+
+function drawFace(cx, cy, color) {
+  const c = S.cell;
+  const mx = cx * c + c / 2, my = cy * c + c / 2;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(mx, my, c * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#0e1320";
+  ctx.beginPath();
+  ctx.arc(mx - c * 0.12, my - c * 0.06, c * 0.05, 0, Math.PI * 2);
+  ctx.arc(mx + c * 0.12, my - c * 0.06, c * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function mark(cx, cy, text) {
+  const c = S.cell;
+  ctx.font = Math.floor(c * 0.6) + "px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#e6e9f2";
+  ctx.fillText(text, cx * c + c / 2, cy * c + c / 2);
+}
+
+// arrow on cell (cx, cy) pointing in direction (dx, dy)
+function arrow(cx, cy, dx, dy) {
+  const c = S.cell;
+  ctx.save();
+  ctx.translate(cx * c + c / 2, cy * c + c / 2);
+  ctx.rotate(Math.atan2(dy, dx));
+  ctx.fillStyle = "#ff5c6c";
+  ctx.beginPath();
+  ctx.moveTo(c * 0.3, 0);
+  ctx.lineTo(-c * 0.2, -c * 0.22);
+  ctx.lineTo(-c * 0.2, c * 0.22);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function draw() {
+  const N = S.grid, c = S.cell, m = S.last;
+  if (!N || !m) return;
+  const x0 = m.x, y0 = m.y;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+
+  // board tiles
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      ctx.fillStyle = (x + y) % 2 ? "#1b2440" : "#18213a";
+      ctx.fillRect(x * c, y * c, c, c);
+    }
+  }
+
+  // fog: everything is hidden except your own cell, and the 3x3 around
+  // you after a scan. The fog is only how "no information" is drawn:
+  // the server never sends positions you cannot know.
+  const reach = m.didScan ? 1 : 0;
+  ctx.fillStyle = "rgba(6, 9, 16, 0.93)";
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      if (Math.abs(x - x0) > reach || Math.abs(y - y0) > reach) ctx.fillRect(x * c, y * c, c, c);
+    }
+  }
+
+  // alert marks on your own cell
+  const px = x0 * c, py = y0 * c, t = Math.max(3, Math.floor(c / 10));
+  ctx.fillStyle = "#ff5c6c";
+  if (m.front > 0) ctx.fillRect(px, py, c, t);
+  if (m.back > 0) ctx.fillRect(px, py + c - t, c, t);
+  ctx.fillStyle = "#ffb84d";
+  if (m.sides > 0) { ctx.fillRect(px, py, t, c); ctx.fillRect(px + c - t, py, t, c); }
+  if (m.near > 0) {
+    ctx.strokeStyle = "#ff5c6c";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect((x0 - 2) * c + 1, (y0 - 2) * c + 1, 5 * c - 2, 5 * c - 2);
+    ctx.setLineDash([]);
+  }
+
+  // you
+  drawFace(x0, y0, m.died ? "#ff5c6c" : "#3ddc97");
+
+  // enemies revealed by a scan (exact neighbors only)
+  if (m.didScan) {
+    for (const name of m.scan || []) {
+      const d = DIRS[name];
+      if (d && inside(x0 + d[0], y0 + d[1])) drawFace(x0 + d[0], y0 + d[1], "#ff5c6c");
+    }
+  }
+
+  // if you were shot you already respawned, so show the spot where it happened
+  const origin = m.died && S.prev ? S.prev : { x: x0, y: y0 };
+  for (const s of m.shots || []) {
+    const d = DIRS[s.dir];
+    if (d && inside(origin.x + d[0], origin.y + d[1])) mark(origin.x + d[0], origin.y + d[1], s.hit ? "💥" : "✖");
+  }
+  if (m.died && S.prev) {
+    mark(S.prev.x, S.prev.y, "☠");
+    for (const name of m.shotFrom || []) {
+      const d = DIRS[name];
+      if (d && inside(S.prev.x + d[0], S.prev.y + d[1])) arrow(S.prev.x + d[0], S.prev.y + d[1], -d[0], -d[1]);
+    }
+  }
+
+  // outer wall
+  ctx.strokeStyle = "#5b6b9a";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, 1.5, cv.width - 3, cv.height - 3);
+}
+</script>
+</body>
+</html>

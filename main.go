@@ -13,7 +13,7 @@ func main() {
 		return
 	}
 
-	lobby := NewLobby(3*time.Second, 20)
+	lobby := NewLobby(10*time.Second, 20)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/create", lobby.HandleCreate)

@@ -25,7 +25,7 @@ var (
 type LobbyMsg struct {
 	Type    string   `json:"type"`
 	Code    string   `json:"code"`
-	Players []string `json:"Players"`
+	Players []string `json:"players"`
 }
 
 type StartMsg struct {
@@ -260,7 +260,7 @@ func (r *Room) Start(token string) error {
 	r.game, r.server, r.started = game, srv, true
 
 	r.broadcastLocked(StartMsg{
-		Type:     "Start",
+		Type:     "start",
 		GridSize: game.Size,
 		Rounds:   r.maxRounds,
 		RoundMs:  int(r.roundLen / time.Millisecond),
@@ -304,7 +304,7 @@ func (r *Room) finish() {
 	})
 
 	r.finished = true
-	r.broadcastLocked(EndMsg{Type: "End", Scores: scores})
+	r.broadcastLocked(EndMsg{Type: "end", Scores: scores})
 
 	if r.onDone != nil {
 		r.onDone()

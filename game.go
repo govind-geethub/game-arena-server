@@ -8,7 +8,7 @@ import (
 const (
 	UnitsPerKill   = 840
 	MaxCharge      = 3
-	CellsPerPlayer = 28
+	CellsPerPlayer = 10
 	NumDirections  = 8
 )
 
