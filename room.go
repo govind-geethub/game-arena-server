@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	MaxPlayers  = 8
-	idleTimeout = 30 * time.Minute
+	MaxPlayers    = 8
+	idleTimeout   = 30 * time.Minute
+	maxSpectators = 4
 )
 
 var (
@@ -33,6 +34,7 @@ type StartMsg struct {
 	GridSize int    `json:"gridSize"`
 	Rounds   int    `json:"rounds"`
 	RoundMs  int    `json:"roundMs"`
+	Players  int    `json:"players"`
 }
 
 type ShotMsg struct {
@@ -58,6 +60,7 @@ type RoundMsg struct {
 	Died     bool      `json:"died"`
 	DidScan  bool      `json:"didScan"`
 	Scan     []string  `json:"scan"`
+	Notice   string    `json:"notice"`
 }
 
 type ScoreMsg struct {
@@ -72,7 +75,26 @@ type EndMsg struct {
 
 type ErrorMsg struct {
 	Type    string `json:"type"`
-	Message string `json:"string"`
+	Message string `json:"message"`
+}
+
+type GodPlayer struct {
+	Name    string    `json:"name"`
+	X       int       `json:"x"`
+	Y       int       `json:"y"`
+	Charge  int       `json:"charge"`
+	Score   float64   `json:"score"`
+	Died    bool      `json:"died"`
+	DidScan bool      `json:"didScan"`
+	Shots   []ShotMsg `json:"shots"`
+}
+
+type GodMsg struct {
+	Type     string      `json:"type"`
+	Round    int         `json:"round"`
+	GridSize int         `json:"gridSize"`
+	Rounds   int         `json:"rounds"`
+	Players  []GodPlayer `json:"players"`
 }
 
 // ---- client ----
@@ -112,22 +134,25 @@ type Room struct {
 	createdAt time.Time
 	onDone    func()
 
-	mu       sync.Mutex
-	clients  map[string]*Client
-	started  bool
-	finished bool
-	game     *Game
-	server   *Server
+	mu         sync.Mutex
+	clients    map[string]*Client
+	started    bool
+	finished   bool
+	game       *Game
+	server     *Server
+	spectators map[*Client]bool
+	curRound   int
 }
 
 func NewRoom(code, hostToken string, roundLen time.Duration, maxRounds int) *Room {
 	return &Room{
-		code:      code,
-		hostToken: hostToken,
-		roundLen:  roundLen,
-		maxRounds: maxRounds,
-		createdAt: time.Now(),
-		clients:   make(map[string]*Client),
+		code:       code,
+		hostToken:  hostToken,
+		roundLen:   roundLen,
+		maxRounds:  maxRounds,
+		createdAt:  time.Now(),
+		clients:    make(map[string]*Client),
+		spectators: make(map[*Client]bool),
 	}
 }
 
@@ -143,6 +168,10 @@ func (r *Room) lobbyLocked() LobbyMsg {
 
 func (r *Room) broadcastLocked(msg any) {
 	for _, c := range r.clients {
+		c.Send(msg)
+	}
+
+	for c := range r.spectators {
 		c.Send(msg)
 	}
 }
@@ -200,7 +229,7 @@ func (r *Room) Submit(id string, a Action) {
 }
 
 // sendRondLocked builds one player's own update
-func (r *Room) sendRondLocked(round int, id string, c *Client, f *Feedback) {
+func (r *Room) sendRoundLocked(round int, id string, c *Client, f *Feedback) {
 	v, ok := r.game.ViewFor(id)
 	if !ok {
 		return
@@ -223,6 +252,7 @@ func (r *Room) sendRondLocked(round int, id string, c *Client, f *Feedback) {
 		Died:     f.Died,
 		DidScan:  f.DidScan,
 		Scan:     dirNames(f.Scan),
+		Notice:   f.Notice,
 	})
 }
 
@@ -264,12 +294,14 @@ func (r *Room) Start(token string) error {
 		GridSize: game.Size,
 		Rounds:   r.maxRounds,
 		RoundMs:  int(r.roundLen / time.Millisecond),
+		Players:  len(game.Players),
 	})
 
 	// round 0 everyone gets their own position
 	for id, c := range r.clients {
-		r.sendRondLocked(0, id, c, nil)
+		r.sendRoundLocked(0, id, c, nil)
 	}
+	r.sendGodLocked(0, nil)
 	r.mu.Unlock()
 
 	go func() {
@@ -283,9 +315,11 @@ func (r *Room) Start(token string) error {
 func (r *Room) onRound(round int, fb map[string]*Feedback) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.curRound = round
 	for id, c := range r.clients {
-		r.sendRondLocked(round, id, c, fb[id])
+		r.sendRoundLocked(round, id, c, fb[id])
 	}
+	r.sendGodLocked(round, fb)
 }
 
 // finish gives out the final scores, highest first, then cleans up
@@ -305,11 +339,12 @@ func (r *Room) finish() {
 
 	r.finished = true
 	r.broadcastLocked(EndMsg{Type: "end", Scores: scores})
+	r.mu.Unlock()
 
 	if r.onDone != nil {
 		r.onDone()
 	}
-	time.AfterFunc(10*time.Second, r.ShutDown)
+	time.AfterFunc(10*time.Second, r.Shutdown)
 }
 
 // idleExpired reports whether a party was never startetd and is too old
@@ -319,10 +354,86 @@ func (r *Room) idleExpired(now time.Time) bool {
 	return !r.started && now.Sub(r.createdAt) > idleTimeout
 }
 
-func (r *Room) ShutDown() {
+func (r *Room) Shutdown() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, c := range r.clients {
 		c.Close()
 	}
+	for c := range r.spectators {
+		c.Close()
+	}
+}
+
+//-------- God's Eye --------
+
+// every player position
+// only to spectators
+func (r *Room) godSnapshotLocked(round int, fb map[string]*Feedback) GodMsg {
+	msg := GodMsg{Type: "god", Round: round, GridSize: r.game.Size, Rounds: r.maxRounds}
+	names := make([]string, 0, len(r.game.Players))
+	for id := range r.game.Players {
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	for _, id := range names {
+		p := r.game.Players[id]
+		gp := GodPlayer{
+			Name: id, X: p.X, Y: p.Y, Charge: p.Charge,
+			Score: float64(p.Score) / UnitsPerKill,
+			Shots: []ShotMsg{},
+		}
+
+		if f := fb[id]; f != nil {
+			gp.Died, gp.DidScan = f.Died, f.DidScan
+			for _, s := range f.Shots {
+				gp.Shots = append(gp.Shots, ShotMsg{Dir: s.Dir.String(), Hit: s.Hit})
+			}
+		}
+		msg.Players = append(msg.Players, gp)
+	}
+	return msg
+}
+
+func (r *Room) sendGodLocked(round int, fb map[string]*Feedback) {
+	if len(r.spectators) == 0 {
+		return
+	}
+
+	snap := r.godSnapshotLocked(round, fb)
+	for c := range r.spectators {
+		c.Send(snap)
+	}
+}
+
+// Spectate adds a read-only viewer
+func (r *Room) Spectate(token string) (*Client, error) {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(r.hostToken)) != 1 {
+		return nil, ErrForbidden
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.spectators) >= maxSpectators {
+		return nil, errors.New("Too many spectators")
+	}
+
+	c := newClient("spectator")
+	r.spectators[c] = true
+	c.Send(r.lobbyLocked())
+	if r.started {
+		c.Send(StartMsg{
+			Type: "start", GridSize: r.game.Size, Rounds: r.maxRounds,
+			RoundMs: int(r.roundLen / time.Millisecond), Players: len(r.game.Players),
+		})
+		c.Send(r.godSnapshotLocked(r.curRound, nil))
+	}
+	return c, nil
+}
+
+func (r *Room) DropSpectator(c *Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.spectators, c)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -136,6 +137,93 @@ func (l *Lobby) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		if a, ok := parseAction(m); ok {
 			room.Submit(c.ID, a)
+		}
+	}
+}
+
+// sends client's queued msg over connection
+func writeLoop(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, c *Client) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.done:
+			cancel()
+			return
+		case b := <-c.send:
+			wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Write(wctx, websocket.MessageText, b)
+			wcancel()
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// HandleSpectate serves only host's read only view
+// 1st msg will be : {"token": "..."}
+func (l *Lobby) HandleSpectate(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	defer conn.CloseNow()
+	conn.SetReadLimit(1024)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ip := clientIP(r)
+	if l.Blocked(ip) {
+		refuse(ctx, conn, "too many failed attempts, wait a minute")
+		return
+	}
+
+	code := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("code")))
+	room := l.Get(code)
+	if room == nil {
+		l.RecordFail(ip)
+		refuse(ctx, conn, "party not found")
+		return
+	}
+
+	// token arrives in first msg not in URL
+	// if not in 5s it arrives, connection dropped
+	timer := time.AfterFunc(5*time.Second, cancel)
+	_, data, err := conn.Read(ctx)
+	timer.Stop()
+	if err != nil {
+		return
+	}
+	var auth struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(data, &auth) != nil {
+		refuse(ctx, conn, "bad request")
+		return
+	}
+
+	c, err := room.Spectate(auth.Token)
+	if err != nil {
+		if errors.Is(err, ErrForbidden) {
+			l.RecordFail(ip)
+			refuse(ctx, conn, "forbidden")
+		} else {
+			refuse(ctx, conn, err.Error())
+		}
+		return
+	}
+
+	defer room.DropSpectator(c)
+	go writeLoop(ctx, cancel, conn, c)
+
+	// read only: anything viewer sends ignored
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
 		}
 	}
 }

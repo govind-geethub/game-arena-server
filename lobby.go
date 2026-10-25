@@ -145,7 +145,7 @@ func (l *Lobby) janitor() {
 
 		l.mu.Unlock()
 		for _, room := range expired {
-			room.ShutDown()
+			room.Shutdown()
 		}
 	}
 }
